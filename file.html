@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Castle Defense Game</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background: url('https://static.vecteezy.com/system/resources/previews/014/572/097/original/background-of-green-grass-field-cartoon-drawing-free-vector.jpg') no-repeat center center fixed; 
+            background-size: cover; /* Ensures the image covers the entire background */
+        }
+        canvas { 
+            display: block; 
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Your game logic here
+    </script>
+</body>
+</html>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // Set canvas size
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // Define castle properties
+        const castle = {
+            x: canvas.width / 2 - 50,
+            y: canvas.height - 150,
+            width: 100,
+            height: 100,
+            color: "gray",
+        };
+        
+        const turretCosts = {
+            semiAuto: 10,
+            incendiary: 20,
+            sentry: 15,
+            healer: 25
+        };
+
+        // Arrays to store turrets, bullets, and enemies
+        const turrets = [];
+        const bullets = [];
+        const enemies = [];
+        let score = 0;
+        let resources = 50; // Starting resources
+        let castleHealth = 5; // Initial health
+        let waveCount = 0;
+        let specialAbilityCooldown = 0;
+        let selectedTurretType = 'semiAuto'; // Default turret type
+
+        // Draw the castle
+        function drawCastle() {
+            ctx.fillStyle = castle.color;
+            ctx.fillRect(castle.x, castle.y, castle.width, castle.height);
+        }
+        class FireBullet {
+            constructor(x, y, angle, damage) {
+                this.x = x;
+                this.y = y;
+                this.speed = 5;
+                this.angle = angle;
+                this.damage = damage;
+                this.lifetime = 100; // Duration before the fire bullet disappears
+                this.radius = 8; // Increased radius for a more fireball-like appearance
+                this.isExploding = false; // Flag to check if the bullet has exploded
+            }
+        
+            update() {
+                if (!this.isExploding) {
+                    this.x += this.speed * Math.cos(this.angle);
+                    this.y += this.speed * Math.sin(this.angle);
+                    this.lifetime--; // Decrease lifetime
+                }
+            }
+        
+            draw() {
+                ctx.fillStyle = "orange"; // Color for fire bullets
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+        
+                // Optional flickering effect
+                if (Math.random() < 0.1) {
+                    ctx.fillStyle = "yellow"; // Flickering color
+                    ctx.beginPath();
+                    ctx.arc(this.x + (Math.random() * 2 - 1), this.y + (Math.random() * 2 - 1), this.radius * 0.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        
+            explode() {
+                this.isExploding = true;
+                this.radius = 0; // Shrink bullet size
+                // Here you can add explosion effect logic, such as damaging nearby enemies
+            }
+        
+            isExpired() {
+                return this.lifetime <= 0;
+            }
+        }
+      
+    
+       // Base Turret class
+class Turret {
+    constructor(x, y, color, damage, range, ammo, health) {
+        this.x = x;
+        this.y = y;
+        this.radius = 20; // Standard radius for turrets
+        this.cooldown = 0;
+        this.range = range;
+        this.color = color;
+        this.damage = damage;
+        this.ammo = ammo;
+        this.maxAmmo = ammo;
+        this.health = health; // Each turret starts with specified health
+        this.rotation = 0; // Initial rotation angle in radians
+        this.rotationSpeed = 0.05; // Speed of rotation when searching for enemies
+    }
+
+    draw() {
+        // Draw the turret base
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.fill();
+        ctx.stroke();
+
+        // Draw health bar
+        ctx.fillStyle = "red";
+        ctx.fillRect(this.x - this.radius, this.y - this.radius - 10, this.radius * 2, 5);
+        ctx.fillStyle = "green";
+        ctx.fillRect(this.x - this.radius, this.y - this.radius - 10, this.radius * 2 * (this.health / 100), 5);
+
+        // Draw range indicator
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.range, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(0, 0, 255, 0.2)";
+        ctx.stroke();
+
+        // Draw the barrel
+        this.drawBarrel();
+    }
+
+    drawBarrel() {
+        const barrelLength = 30; // Length of the barrel
+        const barrelWidth = 5; // Width of the barrel
+
+        ctx.save(); // Save the current state
+        ctx.translate(this.x, this.y); // Move to the turret's position
+        ctx.rotate(this.rotation); // Rotate to the current angle
+
+        // Draw the barrel
+        ctx.fillStyle = "black"; // Color of the barrel
+        ctx.fillRect(0, -barrelWidth / 2, barrelLength, barrelWidth); // Draw the barrel rectangle
+
+        ctx.restore(); // Restore the state to avoid affecting other drawings
+    }
+
+    findTarget() {
+        return enemies.find(enemy => 
+            Math.hypot(enemy.x - this.x, enemy.y - this.y) < this.range
+        );
+    }
+
+    shoot(target) {
+        if (this.cooldown <= 0 && this.ammo > 0) {
+            const angle = Math.atan2(target.y - this.y, target.x - this.x);
+            bullets.push({ x: this.x, y: this.y, speed: 5, angle: angle, damage: this.damage });
+            this.cooldown = this.getCooldown(); // Cooldown based on turret type
+            this.ammo--; // Decrease ammo
+        }
+    }
+
+    update() {
+        if (this.cooldown > 0) this.cooldown--;
+
+        const target = this.findTarget();
+        if (target) {
+            const angle = Math.atan2(target.y - this.y, target.x - this.x);
+            this.rotation = angle; // Point the barrel at the target
+            this.shoot(target);
+        } else {
+            // If no target is found, rotate the barrel
+            this.rotation += this.rotationSpeed; // Rotate the barrel
+            if (this.rotation >= Math.PI * 2) {
+                this.rotation -= Math.PI * 2; // Keep the angle within 0 to 2π
+            }
+        }
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        if (this.health <= 0) {
+            // Remove turret logic
+            const turretIndex = turrets.indexOf(this);
+            if (turretIndex > -1) {
+                turrets.splice(turretIndex, 1);
+            }
+        }
+    }
+}
+class BallisticTurret extends Turret {
+    constructor(x, y) {
+        super(x, y, "blue", 70, 400, 10, 100); // Color, Damage, Range, Ammo, Health
+        this.gravity = 0.5; // Gravity effect on the projectile
+    }
+
+    getCooldown() {
+        return 200; // Slower shooting for ballistic turret
+    }
+
+    shoot(target) {
+        if (this.cooldown <= 0 && this.ammo > 0) {
+            const angle = Math.atan2(target.y - this.y, target.x - this.x);
+            const speed = 8; // Initial speed of the projectile
+            bullets.push(new BallisticBullet(this.x, this.y, speed, angle, this.damage, this.gravity));
+            this.cooldown = this.getCooldown(); // Reset cooldown
+            this.ammo--; // Decrease ammo
+        }
+    }
+}
+
+// Ballistic Bullet class
+class BallisticBullet {
+    constructor(x, y, speed, angle, damage, gravity) {
+        this.x = x;
+        this.y = y;
+        this.speed = speed;
+        this.angle = angle;
+        this.damage = damage;
+        this.gravity = gravity;
+        this.velocityX = speed * Math.cos(angle);
+        this.velocityY = speed * Math.sin(angle);
+        this.alive = true; // Track if the bullet is still active
+    }
+
+    update() {
+        if (this.alive) {
+            this.x += this.velocityX;
+            this.y += this.velocityY;
+            this.velocityY += this.gravity; // Apply gravity to vertical velocity
+
+            // Check for collision with enemies (assuming enemies are defined)
+            enemies.forEach((enemy, enemyIndex) => {
+                if (
+                    this.x > enemy.x &&
+                    this.x < enemy.x + enemy.width &&
+                    this.y > enemy.y &&
+                    this.y < enemy.y + enemy.height
+                ) {
+                    enemy.takeDamage(this.damage); // Apply damage to the enemy
+                    this.alive = false; // Mark bullet as no longer active
+                }
+            });
+
+            // Check if the bullet goes off-screen (or any other condition to expire)
+            if (this.y > canvas.height || this.x > canvas.width || this.x < 0) {
+                this.alive = false; // Mark bullet as no longer active
+            }
+        }
+    }
+
+    draw() {
+        if (this.alive) {
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, 5, 0, Math.PI * 2); // Draw bullet as a small circle
+            ctx.fillStyle = "red"; // Color of the bullet
+            ctx.fill();
+            ctx.stroke();
+        }
+    }
+}
+
+
+        // Semi-Auto Tur ret class
+        class SemiAutoTurret extends Turret {
+            constructor(x, y) {
+                super(x, y, "lightblue", 10, 100, 10, 100); // Color, Damage, Range, Ammo, Health
+                this.maxAmmo = 25
+            }
+
+            getCooldown() {
+                return 30; // Slower shooting
+            }
+        }
+       
+        class IncendiaryTurret extends Turret {
+            constructor(x, y) {
+                super(x, y, "orange", 50, 80, 5, 80); // Increased initial damage to 25
+                this.maxAmmo = 10;
+                this.fireBullets = []; // Array to hold active fire bullets
+            }
+        
+            getCooldown() {
+                return 80; // Adjusted to balance the turret's power
+            }
+        
+            shoot(target) {
+                if (this.cooldown <= 0 && this.ammo > 0) {
+                    const angle = Math.atan2(target.y - this.y, target.x - this.x);
+                    this.fireBullets.push(new FireBullet(this.x, this.y, angle, this.damage)); // Create a fire bullet
+                    this.cooldown = this.getCooldown(); // Reset cooldown
+                    this.ammo--; // Decrease ammo
+                }
+            }
+        
+            update() {
+                if (this.cooldown > 0) this.cooldown--;
+        
+                const target = this.findTarget();
+                if (target) {
+                    this.shoot(target);
+                }
+        
+                // Update and draw fire bullets
+                this.fireBullets.forEach((bullet, index) => {
+                    bullet.update();
+                    bullet.draw();
+        
+                    // Check for collision with enemies
+                    enemies.forEach((enemy, enemyIndex) => {
+                        if (
+                            bullet.x > enemy.x &&
+                            bullet.x < enemy.x + enemy.width &&
+                            bullet.y > enemy.y &&
+                            bullet.y < enemy.y + enemy.height
+                        ) {
+                            enemy.takeDamage(bullet.damage); // Apply initial damage
+                            // Apply burning effect with increased damage over time
+                            const burningInterval = setInterval(() => {
+                                if (enemy.health > 0) {
+                                    enemy.takeDamage(5); // Increased damage over time
+                                } else {
+                                    clearInterval(burningInterval); // Stop burning when enemy is dead
+                                }
+                            }, 1000); // Damage every second
+                            bullets.splice(index, 1); // Remove the bullet after hit
+                        }
+                    });
+        
+                    // Remove expired bullets
+                    if (bullet.isExpired()) {
+                        this.fireBullets.splice(index, 1);
+                    }
+                });
+            }
+        }
+        // Sentry Turret class
+        class SentryTurret extends Turret {
+            constructor(x, y) {
+                super(x, y, "green", 5, 120, 20, 120); // Color, Damage, Range, Ammo, Health
+                this.maxAmmo = 75
+            }
+
+            getCooldown() {
+                return 10; // Faster shooting
+            }
+        }
+
+        class HealingTurret extends Turret {
+            constructor(x, y) {
+                super(x, y, "pink", 0, 50, 0, 100); // Color, Damage, Range, Ammo, Health
+                this.radius = 10; // Smaller size for healer turrets
+                this.speed = 1; // Movement speed
+                this.moveAngle = Math.random() * 2 * Math.PI; // Random initial movement direction
+                this.targetTurret = null; // Track the turret this healer turret is targeting
+            }
+        
+            update() {
+                // Find turrets needing healing and ammo
+                const turretsNeedingHealing = turrets.filter(turret => turret.health < 100);
+                const turretsNeedingAmmo = turrets.filter(turret => turret.ammo < turret.maxAmmo);
+        
+                // Combine the two lists
+                const turretsNeedingSupport = [...turretsNeedingHealing, ...turretsNeedingAmmo];
+        
+                // If there are turrets needing support, select one
+                if (turretsNeedingSupport.length > 0) {
+                    // If no target turret is set or if the target turret is at full health and ammo, select a new target
+                    if (!this.targetTurret || (this.targetTurret.health >= 100 && this.targetTurret.ammo >= this.targetTurret.maxAmmo)) {
+                        this.targetTurret = turretsNeedingSupport[Math.floor(Math.random() * turretsNeedingSupport.length)];
+                    }
+        
+                    // Move directly towards the target turret
+                    const angle = Math.atan2(this.targetTurret.y - this.y, this.targetTurret.x - this.x);
+                    this.x += this.speed * Math.cos(angle);
+                    this.y += this.speed * Math.sin(angle);
+        
+                    // Heal turret and replenish ammo when close enough
+                    if (Math.hypot(this.targetTurret.x - this.x, this.targetTurret.y - this.y) < this.range) {
+                        if (this.targetTurret.health < 100) {
+                            this.targetTurret.health = Math.min(this.targetTurret.health + 10, 100); // Heal turret
+                        }
+                        if (this.targetTurret.ammo < this.targetTurret.maxAmmo) {
+                            this.targetTurret.ammo++; // Replenish ammo
+                        }
+                        // Reset target turret after support
+                        this.targetTurret = null; // Reset target to allow selection of a new turret
+                    }
+                } else {
+                    // Move in a random direction if no turrets need support
+                    this.x += this.speed * Math.cos(this.moveAngle);
+                    this.y += this.speed * Math.sin(this.moveAngle);
+        
+                    // Randomly change direction occasionally
+                    if (Math.random() < 0.01) { // Change direction with a small probability
+                        this.moveAngle = Math.random() * 2 * Math.PI;
+                    }
+                }
+            }
+        }
+        class GatlingTurret extends Turret {
+            constructor(x, y) {
+                super(x, y, "gold", 15, 150, 50, 100); // Increased range to 150
+                this.maxAmmo = 200; // High ammo capacity for a Gatling gun
+                this.burstCooldown = 5; // Time between bursts
+                this.burstCount = 0; // Count of bullets fired in a burst
+                this.spreadAngle = 0.6; // Angle spread in radians
+            }
+        
+            getCooldown() {
+                return 5; // Fast shooting
+            }
+        
+            shoot(target) {
+                if (this.cooldown <= 0 && this.ammo > 0) {
+                    const angle = Math.atan2(target.y - this.y, target.x - this.x);
+                    // Apply spread by creating a random angle within the spread range
+                    const spread = (Math.random() * this.spreadAngle) - (this.spreadAngle / 2);
+                    const finalAngle = angle + spread;
+        
+                    bullets.push({ 
+                        x: this.x, 
+                        y: this.y, 
+                        speed: 4, 
+                        angle: finalAngle, // Use the spread angle
+                        damage: this.damage 
+                    });
+                    this.cooldown = this.getCooldown(); // Reset cooldown
+                    this.ammo--; // Decrease ammo
+                    this.burstCount++;
+        
+                    // After firing a certain number of bullets, add a burst cooldown
+                    if (this.burstCount >= 5) {
+                        this.cooldown += this.burstCooldown; // Add additional cooldown after a burst
+                        this.burstCount = 0; // Reset burst count
+                    }
+                }
+            }
+        
+            update() {
+                if (this.cooldown > 0) this.cooldown--;
+        
+                const target = this.findTarget();
+                if (target) {
+                    this.shoot(target);
+                } else {
+                    // If no target is found, rotate the barrel
+                    this.rotation += this.rotationSpeed; // Rotate the barrel
+                    if (this.rotation >= Math.PI * 2) {
+                        this.rotation -= Math.PI * 2; // Keep the angle within 0 to 2π
+                    }
+                }
+            }
+        }
+        class AmmoRefillTurret extends Turret {
+            constructor(x, y) {
+                super(x, y, "purple", 0, 50, 0, 100); // Color, Damage, Range, Ammo, Health
+                this.radius = 10; // Smaller size for ammo refill turrets
+                this.speed = 0.5; // Slower movement speed
+                this.moveAngle = Math.random() * 2 * Math.PI; // Random initial movement direction
+                this.targetTurret = null; // Track the turret this refill turret is targeting
+            }
+        
+            update() {
+                // Find turrets needing ammo
+                const turretsNeedingAmmo = turrets.filter(turret => turret.ammo < turret.maxAmmo);
+        
+                if (turretsNeedingAmmo.length > 0) {
+                    // If no target turret is set or if the target turret is out of ammo, select a new target
+                    if (!this.targetTurret || this.targetTurret.ammo >= this.targetTurret.maxAmmo) {
+                        this.targetTurret = turretsNeedingAmmo[Math.floor(Math.random() * turretsNeedingAmmo.length)];
+                    }
+        
+                    // Move directly towards the target turret
+                    const angle = Math.atan2(this.targetTurret.y - this.y, this.targetTurret.x - this.x);
+                    this.x += this.speed * Math.cos(angle);
+                    this.y += this.speed * Math.sin(angle);
+        
+                    // Refill ammo when close enough
+                    if (Math.hypot(this.targetTurret.x - this.x, this.targetTurret.y - this.y) < this.range) {
+                        this.targetTurret.ammo = Math.min(this.targetTurret.ammo + (this.targetTurret.maxAmmo - this.targetTurret.ammo), this.targetTurret.maxAmmo);
+                        // Reset target turret after refilling
+                        this.targetTurret = null;
+                    }
+                } else {
+                    // Move in a random direction if no turrets need ammo
+                    this.x += this.speed * Math.cos(this.moveAngle);
+                    this.y += this.speed * Math.sin(this.moveAngle);
+        
+                    // Randomly change direction occasionally
+                    if (Math.random() < 0.01) { // Change direction with a small probability
+                        this.moveAngle = Math.random() * 2 * Math.PI;
+                    }
+                }
+            }
+        }
+       // Base Enemy class
+class Enemy {
+    constructor(x, y, type, health, speed, damage) {
+        this.x = x;
+        this.y = y;
+        this.type = type;
+        this.width = 30;
+        this.height = 30;
+        this.speed = speed;
+        this.color = this.getColor();
+        this.health = health; // Health set by the specific enemy type
+        this.damage = damage; // Damage dealt to turrets
+    }
+
+    getColor() {
+        switch (this.type) {
+            case 'footSoldier':
+                return 'red';
+            case 'shieldSoldier':
+                return 'blue';
+            case 'fastSoldier':
+                return 'green';
+            case 'heavySoldier':
+                return 'purple';
+            default:
+                return 'black';
+        }
+    }
+
+    draw() {
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+    }
+
+    update() {
+        this.y += this.speed;
+    }
+
+    takeDamage(amount) {
+        this.health -= amount;
+        if (this.health <= 0) {
+            // Remove enemy logic
+            const enemyIndex = enemies.indexOf(this);
+            if (enemyIndex > -1) {
+                enemies.splice(enemyIndex, 1);
+            }
+        }
+    }
+}
+
+// Specific enemy classes
+class FootSoldier extends Enemy {
+    constructor(x, y) {
+        super(x, y, 'footSoldier', 30, 1.5, 5); // Health: 50, Speed: 2, Damage: 5
+    }
+}
+
+class ShieldSoldier extends Enemy {
+    constructor(x, y) {
+        super(x, y, 'shieldSoldier', 70, 1, 3); // Health: 100, Speed: 1, Damage: 3
+    }
+}
+
+class FastSoldier extends Enemy {
+    constructor(x, y) {
+        super(x, y, 'fastSoldier', 15, 2.5, 4); // Health: 30, Speed: 4, Damage: 4
+    }
+}
+
+class HeavySoldier extends Enemy {
+    constructor(x, y) {
+        super(x, y, 'heavySoldier', 150, 0.7, 6); // Health: 150, Speed: 1, Damage: 6
+    }
+}
+// Place turrets on click
+canvas.addEventListener("click", (e) => {
+    if (e.clientY < castle.y) {
+        let turretClass;
+        let turretCost;
+
+        switch (selectedTurretType) {
+            case 'semiAuto':
+                turretClass = SemiAutoTurret;
+                turretCost = turretCosts.semiAuto;
+                break;
+            case 'incendiary':
+                turretClass = IncendiaryTurret;
+                turretCost = turretCosts.incendiary;
+                break;
+            case 'sentry':
+                turretClass = SentryTurret;
+                turretCost = turretCosts.sentry;
+                break;
+            case 'healer':
+                turretClass = HealingTurret;
+                turretCost = turretCosts.healer;
+                break;
+            case 'gat':
+                turretClass = GatlingTurret;
+                turretCost = 35;
+                break;
+            case 'ammoRefill':
+                turretClass = AmmoRefillTurret;
+                case 'BalisticTurret':
+                turretClass = BallisticTurret;
+                turretCost = 1;
+                break;
+                turretCost = 15; // Set a cost for the Ammo Refill Turret
+                break;
+        }
+
+        if (turretClass && resources >= turretCost) {
+            turrets.push(new turretClass(e.clientX, e.clientY));
+            resources -= turretCost; // Deduct the cost
+            console.log(`Turret placed! Remaining resources: ${resources}`);
+        } else if (turretClass) {
+            console.log(" Not enough resources to place turret!");
+        }
+    }
+});5
+function spawnEnemies() {
+    const enemyCount = waveCount * 2 + 3; // Increase number of enemies with each wave
+    for (let i = 0; i < enemyCount; i++) {
+        const x = Math.random() * (canvas.width - 30); // Adjust for enemy width
+
+        let enemyType;
+        if (waveCount < 3) {
+            enemyType = Math.random() < 0.5 ? 'footSoldier' : 'shieldSoldier';
+        } else if (waveCount < 5) {
+            enemyType = Math.random() < 0.5 ? 'fastSoldier' : 'shieldSoldier';
+        } else {
+            enemyType = Math.random() < 0.5 ? 'heavySoldier' : 'fastSoldier';
+        }
+
+        // Instantiate the enemy based on the determined type
+        switch (enemyType) {
+            case 'footSoldier':
+                enemies.push(new FootSoldier(x, 0));
+                break;
+            case 'shieldSoldier':
+                enemies.push(new ShieldSoldier(x, 0));
+                break;
+            case 'fastSoldier':
+                enemies.push(new FastSoldier(x, 0));
+                break;
+            case 'heavySoldier':
+                enemies.push(new HeavySoldier(x, 0));
+                break;
+        }
+    }
+    waveCount++;
+}
+
+// Call spawnEnemies every 10 seconds
+setInterval(spawnEnemies, 10000);
+        // Initialize two healer turrets right by the castle
+        function initializeHealers() {
+            turrets.push(new HealingTurret(castle.x - 30, castle.y + 30)); // Left of the castle
+            turrets.push(new HealingTurret(castle.x + 130, castle.y + 30)); // Right of the castle
+        }
+
+        // Main game loop
+        function gameLoop() {
+            // Clear the canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw and update game objects
+            drawCastle();
+
+            turrets.forEach((turret) => {
+                turret.draw();
+                turret.update();
+            });
+
+            bullets.forEach((bullet, index) => {
+                bullet.x += bullet.speed * Math.cos(bullet.angle);
+                bullet.y += bullet.speed * Math.sin(bullet.angle);
+
+                // Remove bullets out of bounds
+                if (bullet.y < 0) bullets.splice(index, 1);
+
+                // Draw bullet
+                ctx.beginPath();
+                ctx.arc(bullet.x, bullet.y, 5, 0, Math.PI * 2);
+                ctx.fillStyle = "yellow"; // Color for bullets
+                ctx.fill();
+            });
+
+            enemies.forEach((enemy, index) => {
+                enemy.update();
+                enemy.draw();
+
+                // Check if enemy reaches the castle
+                if (enemy.y + enemy.height >= castle.y) {
+                    enemies.splice(index, 1); // Remove enemy
+                    castleHealth--; // Decrease health
+                    if (castleHealth <= 0) {
+                        alert("Game Over! Final Score: " + score);
+                        // Optionally reset the game here
+                    }
+                }
+
+                // Check for collision with bullets
+                bullets.forEach((bullet, bulletIndex) => {
+                    if (
+                        bullet.x > enemy.x &&
+                        bullet.x < enemy.x + enemy.width &&
+                        bullet.y > enemy.y &&
+                        bullet.y < enemy.y + enemy.height
+                    ) {
+                        enemy.takeDamage(bullet.damage); // Apply damage to enemy
+                        bullets.splice(bulletIndex, 1); // Remove bullet
+                        score += 10; // Increase score
+                        updateResources(5); // Reward for defeating an enemy
+                        console.log("Score: " + score);
+                    }
+                });
+
+                // Check if enemy is in range of turrets to attack
+                turrets.forEach((turret) => {
+                    if (Math.hypot(enemy.x - turret.x, enemy.y - turret.y) < turret.radius + enemy.width / 2) {
+                        turret.takeDamage(enemy.damage); // Apply damage to turret
+                        enemies.splice(index, 1); // Remove enemy after attacking
+                    }
+                });
+            });
+
+            drawScore(); // Draw the score
+
+            if (specialAbilityCooldown > 0) specialAbilityCooldown--;
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Update resources
+        function updateResources(amount) {
+            resources += amount;
+            console.log("Resources: " + resources);
+        }
+
+        // Display score and health on the canvas
+        function drawScore() {
+            ctx.fillStyle = "black";
+            ctx.font = "20px Arial";
+            ctx.fillText("Score: " + score, 10, 30);
+            ctx.fillText("Castle Health: " + castleHealth, 10, 60);
+            ctx.fillText("Resources: " + resources, 10, 90);
+            ctx.fillText("Selected Turret: " + selectedTurretType, 10, 120);
+        }
+
+        // Special ability function
+        function useSpecialAbility() {
+            if (specialAbilityCooldown <= 0) {
+                enemies.length = 0; // Remove all enemies
+                specialAbilityCooldown = 300; // Set cooldown
+                console.log("Special ability used!");
+            }
+        }
+
+        // Call this function on a specific key press
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "s") { // Press 's' to use special ability
+                 useSpecialAbility();
+            } else if (e.key === "1") { // Press '1' to select Semi-Auto Turret
+                selectedTurretType = 'semiAuto';
+                console.log("Selected turret type: Semi-Auto");
+            } else if (e.key === "2") { // Press '2' to select Incendiary Turret
+                selectedTurretType = 'incendiary';
+                console.log("Selected turret type: Incendiary");
+            } else if (e.key === "3") { // Press '3' to select Sentry Turret
+                selectedTurretType = 'sentry';
+                console.log("Selected turret type: Sentry");
+            } else if (e.key === "4") { // Press '4' to select Healing Turret
+                selectedTurretType = 'healer';
+            } else if (e.key === "5") { // Press '4' to select Healing Turret
+            selectedTurretType = 'ammoRefill';
+        } else if (e.key === "6") { // Press '4' to select Healing Turret
+        selectedTurretType = 'gat';
+    } else if (e.key === "7") { // Press '4' to select Healing Turret
+    selectedTurretType = 'BalisticTurret';
+                console.log("Selected turret type: Healing");
+            }
+        });
+
+        // Initialize the game with two healer turrets
+        initializeHealers();
+
+        // Start the game
+        gameLoop();
+    </script>
+</body>
+</html>
